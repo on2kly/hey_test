@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app-deployment
+  labels:
+    app: web-app
+spec:
+  replicas: 4  # Пиковое значение подов для максимальной нагрузки
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      affinity:  # Настройка для равномерного распределения подов по зонам
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: web-app
+              topologyKey: "kubernetes.io/hostname"  # Запрещаем развёртывание подов на одной ноде для отказоустойчивости
+      containers:
+      - name: web-app-container
+        image: your-image:latest  # Замените на ваше изображение
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "0.1"  # Запрашиваем минимальные ресурсы для нормального состояния
+          limits:
+            memory: "256Mi"
+            cpu: "1"  # На старте может потребоваться до 1 CPU для обработки первых запросов
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10  # Учитываем, что приложению нужно до 10 секунд для инициализации
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        ports:
+        - containerPort: 8080
+      nodeSelector:
+        kubernetes.io/zone: zone-1  # Задаем предпочтение для зоны при развёртывании
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-app-deployment
+  minReplicas: 2  # Минимальное количество подов ночью
+  maxReplicas: 6  # Масштабирование для дневного пика
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50  # Масштабируем при превышении 50% использования CPU
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-app-pdb
+spec:
+  minAvailable: 3  # Минимум 3 пода должны быть всегда доступны
+  selector:
+    matchLabels:
+      app: web-app
